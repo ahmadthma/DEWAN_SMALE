@@ -16,7 +16,7 @@ jobs:
           distribution: 'temurin'
       - name: Setup Project
         run: |
-          mkdir -p app/src/main/java/com/diwan/app app/src/main/res/values gradle/wrapper
+          mkdir -p app/src/main/java/com/diwan/app app/src/main/res/layout app/src/main/res/values gradle/wrapper
           cat << 'EOF' > settings.gradle.kts
           pluginManagement {
               repositories {
@@ -48,8 +48,8 @@ jobs:
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
           EOF
-          curl -sL https://raw.githubusercontent.com/gradle/gradle/v8.6.0/gradle/wrapper/gradle-wrapper.jar -o gradle/wrapper/gradle-wrapper.jar
-          curl -sL https://raw.githubusercontent.com/gradle/gradle/v8.6.0/gradlew -o gradlew
+          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v8.6.0/gradle/wrapper/gradle-wrapper.jar -o gradle/wrapper/gradle-wrapper.jar
+          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v8.6.0/gradlew -o gradlew
           chmod +x gradlew
           cat << 'EOF' > app/build.gradle.kts
           plugins {
@@ -71,52 +71,115 @@ jobs:
                   targetCompatibility = JavaVersion.VERSION_17
               }
               kotlinOptions { jvmTarget = "17" }
-              buildFeatures { compose = true }
-              composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
           }
           dependencies {
-              implementation(platform("androidx.compose:compose-bom:2024.06.00"))
-              implementation("androidx.compose.ui:ui")
-              implementation("androidx.compose.material3:material3")
-              implementation("androidx.activity:activity-compose:1.9.0")
+              implementation("androidx.core:core-ktx:1.13.1")
+              implementation("androidx.appcompat:appcompat:1.7.0")
+              implementation("com.google.android.material:material:1.12.0")
           }
           EOF
-          printf '<resources><string name="app_name">ديوان</string></resources>\n' > app/src/main/res/values/strings.xml
-          printf '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application android:label="@string/app_name" android:supportsRtl="true" android:theme="@android:style/Theme.Material.Light.NoActionBar"><activity android:name=".MainActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity></application></manifest>\n' > app/src/main/AndroidManifest.xml
+          cat << 'EOF' > app/src/main/res/values/strings.xml
+          <resources>
+              <string name="app_name">ديوان</string>
+          </resources>
+          EOF
+          cat << 'EOF' > app/src/main/res/layout/activity_main.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:layoutDirection="rtl"
+              android:padding="16dp">
+
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:orientation="vertical">
+
+                  <TextView
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:text="ديوان — محرر الخطابات الرسمية"
+                      android:textSize="22sp"
+                      android:textStyle="bold"
+                      android:layout_marginBottom="12dp" />
+
+                  <EditText
+                      android:id="@+id/etSubject"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:hint="اكتب موضوع الخطاب هنا..."
+                      android:text="طلب إجازة اعتيادية لمدير الدائرة"
+                      android:layout_marginBottom="12dp" />
+
+                  <Button
+                      android:id="@+id/btnGenerate"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:text="إنشاء الخطاب"
+                      android:layout_marginBottom="16dp" />
+
+                  <TextView
+                      android:id="@+id/tvResult"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:textSize="16sp"
+                      android:lineSpacingExtra="4dp" />
+
+              </LinearLayout>
+          </ScrollView>
+          EOF
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:label="@string/app_name"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.Material3.DayNight.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
           cat << 'EOF' > app/src/main/java/com/diwan/app/MainActivity.kt
           package com.diwan.app
 
           import android.os.Bundle
-          import androidx.activity.ComponentActivity
-          import androidx.activity.compose.setContent
-          import androidx.compose.foundation.layout.*
-          import androidx.compose.material3.*
-          import androidx.compose.runtime.*
-          import androidx.compose.ui.Modifier
-          import androidx.compose.ui.platform.LocalLayoutDirection
-          import androidx.compose.ui.unit.LayoutDirection
-          import androidx.compose.ui.unit.dp
+          import android.widget.Button
+          import android.widget.EditText
+          import android.widget.TextView
+          import androidx.appcompat.app.AppCompatActivity
 
-          class MainActivity : ComponentActivity() {
+          class MainActivity : AppCompatActivity() {
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
-                  setContent {
-                      CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-                          MaterialTheme {
-                              var subject by remember { mutableStateOf("طلب إجازة لمدير الدائرة") }
-                              var letter by remember { mutableStateOf("") }
-                              Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                  Text("ديوان", style = MaterialTheme.typography.headlineMedium)
-                                  OutlinedTextField(value = subject, onValueChange = { subject = it }, label = { Text("الموضوع") }, modifier = Modifier.fillMaxWidth())
-                                  Button(onClick = {
-                                      letter = "بسم الله الرحمن الرحيم\nسعادة المدير الموقر،\nالسلام عليكم ورحمة الله وبركاته،،\nأرفع إليكم بخصوص ($subject) راجياً التفضل بالاطلاع والموافقة.\nوتفضلوا بقبول فائق الاحترام،،"
-                                  }, modifier = Modifier.fillMaxWidth()) { Text("توليد الخطاب") }
-                                  if (letter.isNotEmpty()) {
-                                      Text(letter)
-                                  }
-                              }
-                          }
-                      }
+                  setContentView(R.layout.activity_main)
+
+                  val etSubject = findViewById<EditText>(R.id.etSubject)
+                  val btnGenerate = findViewById<Button>(R.id.btnGenerate)
+                  val tvResult = findViewById<TextView>(R.id.tvResult)
+
+                  btnGenerate.setOnClickListener {
+                      val subj = etSubject.text.toString().trim().ifEmpty { "موضوع رسمي" }
+                      tvResult.text = """
+                          بسم الله الرحمن الرحيم
+                          الموضوع: $subj
+
+                          سعادة المدير الموقر،
+                          السلام عليكم ورحمة الله وبركاته،،
+
+                          أرفع إلى سعادتكم هذا الخطاب بشأن ($subj)، راجياً من سعادتكم التكرم بالاطلاع والتوجيه بما ترونه مناسباً.
+
+                          وتفضلوا بقبول فائق الاحترام والتقدير،،
+
+                          مقدّمه: أبو ياسر
+                      """.trimIndent()
                   }
               }
           }
@@ -127,4 +190,3 @@ jobs:
         with:
           name: diwan-apk
           path: app/build/outputs/apk/debug/app-debug.apk
-          
