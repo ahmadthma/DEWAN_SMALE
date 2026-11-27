@@ -1,0 +1,516 @@
+name: Build Diwan APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Initialize Android project
+        run: |
+          mkdir -p app/src/main/java/com/diwan/app/domain \
+                   app/src/main/java/com/diwan/app/export \
+                   app/src/main/java/com/diwan/app/security \
+                   app/src/main/res/values \
+                   app/src/main/res/xml \
+                   gradle/wrapper
+
+          cat << 'EOF' > settings.gradle.kts
+          rootProject.name = "Diwan"
+          include(":app")
+          EOF
+
+          cat << 'EOF' > gradle.properties
+          org.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          EOF
+
+          cat << 'EOF' > build.gradle.kts
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          EOF
+
+          cat << 'EOF' > gradle/wrapper/gradle-wrapper.properties
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-bin.zip
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          EOF
+
+          curl -sL https://raw.githubusercontent.com/gradle/gradle/v8.7.0/gradle/wrapper/gradle-wrapper.jar -o gradle/wrapper/gradle-wrapper.jar
+          curl -sL https://raw.githubusercontent.com/gradle/gradle/v8.7.0/gradlew -o gradlew
+          chmod +x gradlew
+
+          cat << 'EOF' > app/build.gradle.kts
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.diwan.app"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.diwan.app"
+                  minSdk = 24
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+
+              buildFeatures {
+                  compose = true
+              }
+
+              composeOptions {
+                  kotlinCompilerExtensionVersion = "1.5.14"
+              }
+
+              packaging {
+                  resources {
+                      excludes += setOf(
+                          "META-INF/DEPENDENCIES",
+                          "META-INF/LICENSE",
+                          "META-INF/LICENSE.txt",
+                          "META-INF/NOTICE",
+                          "META-INF/NOTICE.txt"
+                      )
+                  }
+              }
+          }
+
+          dependencies {
+              implementation(platform("androidx.compose:compose-bom:2024.09.00"))
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.activity:activity-compose:1.9.2")
+              implementation("androidx.lifecycle:lifecycle-process:2.8.5")
+              implementation("androidx.biometric:biometric:1.1.0")
+              implementation("androidx.security:security-crypto:1.1.0-alpha06")
+              implementation("org.apache.poi:poi-ooxml:5.2.5")
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/res/values/strings.xml
+          <resources>
+              <string name="app_name">ديوان</string>
+          </resources>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/values/themes.xml
+          <resources>
+              <style name="Theme.Diwan" parent="android:Theme.Material.Light.NoActionBar" />
+          </resources>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/xml/file_paths.xml
+          <paths xmlns:android="http://schemas.android.com/apk/res/android">
+              <cache-path name="exports" path="exports/" />
+          </paths>
+          EOF
+
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+              <application
+                  android:name=".DiwanApplication"
+                  android:allowBackup="false"
+                  android:fullBackupContent="false"
+                  android:label="@string/app_name"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.Diwan">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <provider
+                      android:name="androidx.core.content.FileProvider"
+                      android:authorities="${applicationId}.fileprovider"
+                      android:exported="false"
+                      android:grantUriPermissions="true">
+                      <meta-data
+                          android:name="android.support.FILE_PROVIDER_PATHS"
+                          android:resource="@xml/file_paths" />
+                  </provider>
+              </application>
+          </manifest>
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/diwan/app/domain/DiwanEngine.kt
+          package com.diwan.app.domain
+
+          enum class DocumentType(val title: String) {
+              LETTER("خطاب رسمي"),
+              MEMO("مذكرة داخلية"),
+              REQUEST("طلب رسمي"),
+              CIRCULAR("تعميم إداري")
+          }
+
+          enum class RecipientRank(val label: String, val honorific: String, val closingTitle: String) {
+              MINISTER("وزير / معالي", "معالي", "معاليكم"),
+              DIRECTOR("مدير عام / سعادة", "سعادة", "سعادتكم"),
+              JUDGE_SHEIKH("قاضٍ / فضيلة", "فضيلة", "فضيلتكم"),
+              GENERAL("موظف / زميل", "الأستاذ", "حضرتكم")
+          }
+
+          enum class ToneLevel(val label: String) {
+              SUPERIOR("لمسؤول أعلى"),
+              PEER("لزميل"),
+              SUBORDINATE("لموظف مرؤوس")
+          }
+
+          data class ProofreadIssue(
+              val originalWord: String,
+              val suggestion: String,
+              val reason: String
+          )
+
+          object DiwanEngine {
+              private val linguisticRules = mapOf(
+                  "ابغى" to ("أرغب" to "لفظ عامي؛ يُستبدل بفعل فصيح مناسب للمخاطبات الرسمية."),
+                  "ابي" to ("أرجو" to "لفظ عامي؛ يُستبدل بصيغة طلب رسمية."),
+                  "عشان" to ("لأجل / بغرض" to "أداة تعليل عامية؛ تُستبدل بحرف تعليل فصيح."),
+                  "بخصوص" to ("بشأن" to "«بشأن» أفصح وأكثر استخداماً في الصياغة الإدارية الرسمية."),
+                  "انشاء" to ("إن شاء" to "خطأ إملائي شائع؛ يجب فصل «إن» الشرطية عن «شاء» لتجنب تغير المعنى."),
+                  "مسؤل" to ("مسؤول" to "خطأ إملائي؛ الهمزة مضمومة بعد ساكن فتُكتب على واو."),
+                  "الادارة" to ("الإدارة" to "خطأ إملائي؛ همزة قطع مكسورة تُكتب تحت الألف."),
+                  "ارجو" to ("أرجو" to "خطأ إملائي؛ همزة قطع مفتوحة في أول الفعل المضارع للمتكلم."),
+                  "بسرعه" to ("بصورة عاجلة" to "تعبير غير رسمي مع خطأ في التاء المربوطة.")
+              )
+
+              private val namePrefixes = setOf("السيد", "السيدة", "الأستاذ", "الأستاذة", "المهندس", "الدكتور", "م.", "د.", "أ.", "بن", "بنت")
+
+              fun generateDocument(
+                  subjectLine: String,
+                  type: DocumentType,
+                  rank: RecipientRank,
+                  tone: ToneLevel,
+                  senderName: String,
+                  senderTitle: String
+              ): String {
+                  val cleanSubject = subjectLine.trim()
+                  val greeting = when (type) {
+                      DocumentType.CIRCULAR -> "إلى جميع منسوبي الإدارة المحترمين،\nالسلام عليكم ورحمة الله وبركاته،،"
+                      else -> "${rank.honorific} صاحب الصلاحية الموقر،\nالسلام عليكم ورحمة الله وبركاته،،"
+                  }
+
+                  val intro = when (tone) {
+                      ToneLevel.SUPERIOR -> "يُرفع إلى ${rank.closingTitle} هذا ${type.title} بشأن ($cleanSubject)، راجين من ${rank.closingTitle} التكرم بالاطلاع والتوجيه."
+                      ToneLevel.PEER -> "تحية طيبة وبعد، بالإشارة إلى الموضوع أعلاه والمتعلق بـ ($cleanSubject)، نود التنسيق معكم بهذا الخصوص."
+                      ToneLevel.SUBORDINATE -> "بناءً على مقتضيات مصلحة العمل، وبشأن ($cleanSubject)، يُعتمد الآتي:"
+                  }
+
+                  val body = when (tone) {
+                      ToneLevel.SUPERIOR -> "نحيط ${rank.closingTitle} علماً بأننا نأمل الموافقة على ما ورد أعلاه وفق الأنظمة واللوائح المعمول بها، مع ضمان استمرارية العمل."
+                      ToneLevel.PEER -> "نأمل منكم تزويدنا بما يلزم من بيانات أو مرئيات حول هذا الشأن في أقرب وقت ممكن لاستكمال الإجراءات."
+                      ToneLevel.SUBORDINATE -> "يلزم المباشرة بتنفيذ المطلوب وفق الضوابط المعتمدة، وموافاتنا بتقرير الإنجاز فور الانتهاء."
+                  }
+
+                  val closing = when (tone) {
+                      ToneLevel.SUPERIOR -> "وتفضلوا ${rank.closingTitle} بقبول فائق الاحترام والتقدير،،"
+                      ToneLevel.PEER -> "شاكرين ومقدرين حسن تعاونكم الدائم،،"
+                      ToneLevel.SUBORDINATE -> "للاطلاع والعمل بموجبه،،"
+                  }
+
+                  return buildString {
+                      appendLine("بسم الله الرحمن الرحيم")
+                      appendLine("الموضوع: $cleanSubject")
+                      appendLine("────────────────────────────────")
+                      appendLine(greeting)
+                      appendLine()
+                      appendLine(intro)
+                      appendLine()
+                      appendLine(body)
+                      appendLine()
+                      appendLine(closing)
+                      appendLine()
+                      appendLine("مقدّمه: $senderName")
+                      append("الصفة: $senderTitle")
+                  }
+              }
+
+              fun proofread(text: String): List<ProofreadIssue> {
+                  val issues = mutableListOf<ProofreadIssue>()
+                  val words = text.split(Regex("\\s+"))
+                  for (i in words.indices) {
+                      val clean = words[i].trim('،', '.', '؛', ':', '(', ')')
+                      val prev = if (i > 0) words[i - 1].trim('،', '.', '؛', ':', '(', ')') else ""
+                      if (prev in namePrefixes) continue
+                      linguisticRules[clean]?.let { (suggestion, reason) ->
+                          issues.add(ProofreadIssue(clean, suggestion, reason))
+                      }
+                  }
+                  return issues
+              }
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/diwan/app/export/DocxExporter.kt
+          package com.diwan.app.export
+
+          import android.content.Context
+          import org.apache.poi.xwpf.usermodel.ParagraphAlignment
+          import org.apache.poi.xwpf.usermodel.XWPFDocument
+          import org.openxmlformats.schemas.wordprocessingml.x2006.main.STOnOff
+          import java.io.File
+          import java.io.FileOutputStream
+          import java.math.BigInteger
+
+          object DocxExporter {
+              fun exportToDocx(context: Context, title: String, content: String): File {
+                  val document = XWPFDocument()
+                  val sectPr = document.document.body.addNewSectPr()
+                  val pageMar = sectPr.addNewPgMar()
+                  pageMar.top = BigInteger.valueOf(1440)
+                  pageMar.bottom = BigInteger.valueOf(1440)
+                  pageMar.left = BigInteger.valueOf(1440)
+                  pageMar.right = BigInteger.valueOf(1440)
+
+                  val lines = content.split("\n")
+                  lines.forEachIndexed { index, line ->
+                      val paragraph = document.createParagraph()
+                      val pPr = paragraph.ctp.addNewPPr()
+                      pPr.addNewBidi().setVal(STOnOff.ON)
+
+                      paragraph.alignment = when {
+                          index == 0 -> ParagraphAlignment.CENTER
+                          line.startsWith("مقدّمه:") || line.startsWith("الصفة:") -> ParagraphAlignment.LEFT
+                          else -> ParagraphAlignment.BOTH
+                      }
+
+                      val run = paragraph.createRun()
+                      run.fontFamily = "Traditional Arabic"
+                      run.fontSize = if (index == 0 || line.startsWith("الموضوع:")) 16 else 14
+                      run.isBold = (index == 0 || line.startsWith("الموضوع:"))
+                      run.setText(line)
+                  }
+
+                  val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+                  val safeName = title.replace(Regex("[^\\p{IsArabic}a-zA-Z0-9]"), "_").take(25)
+                  val outputFile = File(exportDir, "ديوان_$safeName.docx")
+
+                  FileOutputStream(outputFile).use { out ->
+                      document.write(out)
+                  }
+                  document.close()
+                  return outputFile
+              }
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/diwan/app/security/SecurityManager.kt
+          package com.diwan.app.security
+
+          import android.app.Application
+          import android.content.Context
+          import androidx.lifecycle.DefaultLifecycleObserver
+          import androidx.lifecycle.LifecycleOwner
+          import androidx.lifecycle.ProcessLifecycleOwner
+          import androidx.security.crypto.EncryptedSharedPreferences
+          import androidx.security.crypto.MasterKey
+          import kotlinx.coroutines.flow.MutableStateFlow
+          import kotlinx.coroutines.flow.StateFlow
+
+          object AppLockState {
+              private val _isLocked = MutableStateFlow(true)
+              val isLocked: StateFlow<Boolean> = _isLocked
+
+              fun lock() { _isLocked.value = true }
+              fun unlock() { _isLocked.value = false }
+          }
+
+          class DiwanApplication : Application(), DefaultLifecycleObserver {
+              override fun onCreate() {
+                  super<Application>.onCreate()
+                  ProcessLifecycleOwner.get().lifecycle.addObserver(this)
+              }
+
+              override fun onStop(owner: LifecycleOwner) {
+                  AppLockState.lock()
+              }
+          }
+
+          class EncryptedVault(context: Context) {
+              private val masterKey = MasterKey.Builder(context)
+                  .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                  .build()
+
+              private val prefs = EncryptedSharedPreferences.create(
+                  context,
+                  "diwan_secure_vault",
+                  masterKey,
+                  EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                  EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+              )
+
+              fun saveDraft(text: String) {
+                  prefs.edit().putString("draft_last", text).apply()
+              }
+
+              fun getLastDraft(): String? = prefs.getString("draft_last", null)
+          }
+          EOF
+
+          cat << 'EOF' > app/src/main/java/com/diwan/app/MainActivity.kt
+          package com.diwan.app
+
+          import android.content.Intent
+          import android.os.Bundle
+          import android.widget.Toast
+          import androidx.activity.compose.setContent
+          import androidx.biometric.BiometricManager
+          import androidx.biometric.BiometricPrompt
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.rememberScrollState
+          import androidx.compose.foundation.verticalScroll
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.platform.LocalContext
+          import androidx.compose.ui.platform.LocalLayoutDirection
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.unit.LayoutDirection
+          import androidx.compose.ui.unit.dp
+          import androidx.core.content.ContextCompat
+          import androidx.core.content.FileProvider
+          import androidx.fragment.app.FragmentActivity
+          import com.diwan.app.domain.*
+          import com.diwan.app.export.DocxExporter
+          import com.diwan.app.security.AppLockState
+          import com.diwan.app.security.EncryptedVault
+
+          class MainActivity : FragmentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  val vault = EncryptedVault(this)
+
+                  setContent {
+                      CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                          MaterialTheme(colorScheme = lightColorScheme()) {
+                              val isLocked by AppLockState.isLocked.collectAsState()
+                              if (isLocked) {
+                                  LockScreen(onUnlockRequest = { authenticateUser() })
+                              } else {
+                                  DiwanMainScreen(vault = vault)
+                              }
+                          }
+                      }
+                  }
+              }
+
+              private fun authenticateUser() {
+                  val executor = ContextCompat.getMainExecutor(this)
+                  val biometricPrompt = BiometricPrompt(this, executor,
+                      object : BiometricPrompt.AuthenticationCallback() {
+                          override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                              AppLockState.unlock()
+                          }
+                      })
+
+                  val promptInfo = BiometricPrompt.PromptInfo.Builder()
+                      .setTitle("ديوان — مساحة عمل مشفّرة")
+                      .setSubtitle("تحقق من هويتك لفتح المستندات")
+                      .setAllowedAuthenticators(
+                          BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                          BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                      )
+                      .build()
+
+                  biometricPrompt.authenticate(promptInfo)
+              }
+          }
+
+          @Composable
+          fun LockScreen(onUnlockRequest: () -> Unit) {
+              LaunchedEffect(Unit) { onUnlockRequest() }
+              Surface(modifier = Modifier.fillMaxSize()) {
+                  Column(
+                      modifier = Modifier.fillMaxSize().padding(24.dp),
+                      verticalArrangement = Arrangement.Center,
+                      horizontalAlignment = Alignment.CenterHorizontally
+                  ) {
+                      Text("ديوان", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                      Spacer(Modifier.height(8.dp))
+                      Text("التطبيق مقفل لحماية بياناتك (وضع دون إنترنت)")
+                      Spacer(Modifier.height(24.dp))
+                      Button(onClick = onUnlockRequest) {
+                          Text("فتح القفل")
+                      }
+                  }
+              }
+          }
+
+          @OptIn(ExperimentalMaterial3Api::class)
+          @Composable
+          fun DiwanMainScreen(vault: EncryptedVault) {
+              val context = LocalContext.current
+              var subject by remember { mutableStateOf("طلب إجازة اعتيادية لمدير الدائرة") }
+              var selectedType by remember { mutableStateOf(DocumentType.REQUEST) }
+              var selectedRank by remember { mutableStateOf(RecipientRank.DIRECTOR) }
+              var selectedTone by remember { mutableStateOf(ToneLevel.SUPERIOR) }
+              var generatedText by remember { mutableStateOf(vault.getLastDraft() ?: "") }
+              var issues by remember { mutableStateOf<List<ProofreadIssue>>(emptyList()) }
+
+              Scaffold(
+                  topBar = { TopAppBar(title = { Text("ديوان • محرر الخطابات الرسمية") }) }
+              ) { padding ->
+                  Column(
+                      modifier = Modifier
+                          .padding(padding)
+                          .padding(16.dp)
+                          .verticalScroll(rememberScrollState()),
+                      verticalArrangement = Arrangement.spacedBy(12.dp)
+                  ) {
+                      OutlinedTextField(
+                          value = subject,
+                          onValueChange = { subject = it },
+                          label = { Text("سطر الموضوع") },
+                          modifier = Modifier.fillMaxWidth()
+                      )
+
+                      Text
