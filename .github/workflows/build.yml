@@ -17,7 +17,24 @@ jobs:
       - name: Setup Project
         run: |
           mkdir -p app/src/main/java/com/diwan/app app/src/main/res/values gradle/wrapper
-          printf 'rootProject.name = "Diwan"\ninclude(":app")\n' > settings.gradle.kts
+          cat << 'EOF' > settings.gradle.kts
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "Diwan"
+          include(":app")
+          EOF
           cat << 'EOF' > build.gradle.kts
           plugins {
               id("com.android.application") version "8.5.2" apply false
